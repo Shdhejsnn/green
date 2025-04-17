@@ -17,17 +17,22 @@ contract GreenLedger is ERC721URIStorage, Ownable {
         bool registered;
     }
 
+    struct CarbonCredit {
+        string region;
+        uint256 amount;
+    }
+
     mapping(address => Company) public companies;
+    mapping(uint256 => CarbonCredit) public credits;
 
     constructor() ERC721("GreenCredit", "GCC") Ownable(msg.sender) {
-    tokenCounter = 0;
-}
-
+        tokenCounter = 0;
+    }
 
     function registerCompany(string memory _name, CompanyType _type) public {
         require(!companies[msg.sender].registered, "Already registered");
 
-        uint256 threshold = 100; // Default
+        uint256 threshold = 100;
         if (_type == CompanyType.Manufacturing) threshold = 200;
         else if (_type == CompanyType.Technology) threshold = 80;
         else if (_type == CompanyType.Energy) threshold = 300;
@@ -42,46 +47,56 @@ contract GreenLedger is ERC721URIStorage, Ownable {
         return (c.name, c.wallet, c.companyType, c.threshold, c.registered);
     }
 
-    function mintCredit(address to, string memory tokenURI) public onlyOwner {
+    function mintCredit(
+        address to,
+        string memory region,
+        uint256 amount,
+        string memory tokenURI
+    ) public onlyOwner {
         uint256 tokenId = tokenCounter;
         _safeMint(to, tokenId);
         _setTokenURI(tokenId, tokenURI);
+        credits[tokenId] = CarbonCredit(region, amount);
         tokenCounter++;
     }
 
-    // 🚨 MARKETPLACE LOGIC STARTS HERE 🚨
+    // ✅ Smart contract-based buy logic with ETH forwarding
+    function buyCredit(
+    string memory region,
+    uint256 amount,
+    string memory tokenURI
+) public payable returns (uint256) {
+    require(msg.value > 0, "ETH required");
 
-    struct Listing {
-        uint256 tokenId;
-        uint256 price;
-        address seller;
-    }
+    uint256 tokenId = tokenCounter;
+    _safeMint(msg.sender, tokenId);
+    _setTokenURI(tokenId, tokenURI);
+    credits[tokenId] = CarbonCredit(region, amount);
+    tokenCounter++;
 
-    mapping(uint256 => Listing) public listings;
+    payable(owner()).transfer(msg.value);
 
-    function listCredit(uint256 tokenId, uint256 price) public {
+    return tokenId; // ✅ Return the tokenId
+}
+
+    // ✅ New: Sell Credit Back to Owner
+    function sellCredit(uint256 tokenId, uint256 salePrice) public {
         require(ownerOf(tokenId) == msg.sender, "Not the owner");
-        require(price > 0, "Price must be > 0");
+        require(address(this).balance >= salePrice, "Insufficient contract balance");
 
-        listings[tokenId] = Listing(tokenId, price, msg.sender);
+        // Transfer token to owner
+        _transfer(msg.sender, owner(), tokenId);
+
+        // Transfer ETH to seller
+        payable(msg.sender).transfer(salePrice);
     }
 
-    function buyCredit(uint256 tokenId) public payable {
-        Listing memory listing = listings[tokenId];
-        require(listing.price > 0, "Token not listed");
-        require(msg.value >= listing.price, "Insufficient ETH");
-
-        // Transfer credit
-        _transfer(listing.seller, msg.sender, tokenId);
-
-        // Pay seller
-        payable(listing.seller).transfer(listing.price);
-
-        // Remove listing
-        delete listings[tokenId];
+    // View credit metadata
+    function getCreditDetails(uint256 tokenId) public view returns (string memory, uint256) {
+        CarbonCredit memory c = credits[tokenId];
+        return (c.region, c.amount);
     }
 
-    function getListing(uint256 tokenId) public view returns (Listing memory) {
-        return listings[tokenId];
-    }
+    // Owner can deposit ETH into contract to fund future credit purchases
+    receive() external payable {}
 }
